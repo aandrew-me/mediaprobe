@@ -3,7 +3,6 @@ name: Build Desktop Installers
 on:
   push:
     branches: [release]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -101,19 +100,11 @@ jobs:
 
   linux:
     name: Linux (${{ matrix.arch }})
-    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == matrix.input_name
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || startsWith(inputs.target, 'linux-')
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: x86_64
-            deb_arch: amd64
-            runner: ubuntu-latest
-            input_name: linux-x86_64
-          - arch: arm64
-            deb_arch: arm64
-            runner: ubuntu-24.04-arm
-            input_name: linux-arm64
+        include: ${{ fromJson((github.event_name != 'workflow_dispatch' || inputs.target == 'all') && '[{"arch":"x86_64","deb_arch":"amd64","runner":"ubuntu-latest"},{"arch":"arm64","deb_arch":"arm64","runner":"ubuntu-24.04-arm"}]' || (inputs.target == 'linux-x86_64' && '[{"arch":"x86_64","deb_arch":"amd64","runner":"ubuntu-latest"}]' || '[{"arch":"arm64","deb_arch":"arm64","runner":"ubuntu-24.04-arm"}]')) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
