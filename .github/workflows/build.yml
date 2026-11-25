@@ -180,7 +180,7 @@ jobs:
           sync: rsync
           copyback: true
           prepare: |
-            pkg install -y rust pkgconf libxcb libxkbcommon wayland vulkan-loader vulkan-headers fontconfig freetype2
+            pkg install -y rust pkgconf libxcb libxkbcommon wayland vulkan-loader vulkan-headers fontconfig freetype2 gtk3
           run: |
             rustc --version
             cargo --version

@@ -35,6 +35,21 @@ struct AppState {
     app_icon: Arc<Image>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn register_unix_fonts(cx: &App) {
+    // GPUI maps ".SystemUIFont" to "IBM Plex Sans" on Linux/FreeBSD; embed all 4 UI weights so
+    // systems without desktop fonts still render crisply.
+    let _ = cx.text_system().add_fonts(vec![
+        std::borrow::Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf")),
+        std::borrow::Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-Medium.ttf")),
+        std::borrow::Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-SemiBold.ttf")),
+        std::borrow::Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-Bold.ttf")),
+    ]);
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn register_unix_fonts(_cx: &App) {}
+
 impl AppState {
     fn new(initial_path: Option<PathBuf>) -> Self {
         let mut state = Self {
@@ -48,6 +63,13 @@ impl AppState {
             state.load_file(&p);
         }
         state
+    }
+
+    fn pick_and_load_file(&mut self, cx: &mut Context<Self>) {
+        if let Some(path) = rfd::FileDialog::new().pick_file() {
+            self.load_file(&path);
+            cx.notify();
+        }
     }
 
     fn load_file(&mut self, path: &Path) {
@@ -259,10 +281,7 @@ impl AppState {
                                     .id("open-file-btn")
                                     .child("Open File")
                                     .on_click(cx.listener(|this, _, _, cx| {
-                                        if let Some(path) = rfd::FileDialog::new().pick_file() {
-                                            this.load_file(&path);
-                                            cx.notify();
-                                        }
+                                        this.pick_and_load_file(cx);
                                     })),
                             ),
                     ),
@@ -295,10 +314,7 @@ impl AppState {
                     .cursor_pointer()
                     .id("drop-box")
                     .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(path) = rfd::FileDialog::new().pick_file() {
-                            this.load_file(&path);
-                            cx.notify();
-                        }
+                        this.pick_and_load_file(cx);
                     }))
                     .child(img(self.app_icon.clone()).w(px(52.0)).h(px(52.0)).mb_4())
                     .child(
@@ -904,6 +920,15 @@ fn file_url_to_path(url: &str) -> Option<PathBuf> {
 }
 
 fn main() {
+    #[cfg(target_os = "freebsd")]
+    if std::env::var_os("FONTCONFIG_FILE").is_none() {
+        let freebsd_fontconfig = Path::new("/usr/local/etc/fonts/fonts.conf");
+        if freebsd_fontconfig.exists() {
+            // FreeBSD installs fontconfig under /usr/local/etc, which fontdb does not probe by default.
+            std::env::set_var("FONTCONFIG_FILE", freebsd_fontconfig);
+        }
+    }
+
     let initial_path: Rc<RefCell<Option<PathBuf>>> =
         Rc::new(RefCell::new(std::env::args().nth(1).map(PathBuf::from)));
     let open_target: Rc<RefCell<Option<(Entity<AppState>, AsyncApp)>>> =
@@ -927,6 +952,7 @@ fn main() {
     });
 
     app.run(move |cx: &mut App| {
+        register_unix_fonts(cx);
         let start_file = initial_path.borrow_mut().take();
         let bounds = Bounds::centered(None, size(px(1000.0), px(740.0)), cx);
         let window = cx
