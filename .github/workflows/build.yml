@@ -175,6 +175,7 @@ jobs:
       - name: Build and test inside FreeBSD VM
         uses: vmactions/freebsd-vm@v1
         with:
+          release: "14"
           usesh: true
           sync: rsync
           copyback: true
