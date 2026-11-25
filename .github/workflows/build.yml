@@ -100,7 +100,7 @@ jobs:
   linux:
     name: Linux (x86_64)
     if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'linux'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
 
