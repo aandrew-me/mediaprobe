@@ -26,7 +26,8 @@ A standalone, installable desktop application built in Rust with [GPUI](https://
 ### Prebuilt Installers (via GitHub Actions)
 - **Windows**: Run `MediaProbe-Setup-x86_64.exe` (includes optional **"Inspect with MediaProbe"** Explorer context menu integration).
 - **macOS**: Open `MediaProbe-macOS-Universal.dmg` and drag `MediaProbe.app` into `Applications`.
-- **Linux**: Install `mediaprobe_<version>_amd64.deb` (`sudo apt install ./mediaprobe_*.deb`) or extract `mediaprobe-linux-x86_64.tar.gz`.
+- **Linux (`x86_64` & `arm64`)**: Install `mediaprobe_<version>_amd64.deb` / `mediaprobe_<version>_arm64.deb` (`sudo apt install ./mediaprobe_*.deb`) or extract the `.tar.gz` archive.
+- **FreeBSD (`x86_64`)**: Extract `mediaprobe-freebsd-x86_64.tar.gz` into `/usr/local` (e.g. `sudo tar -xzf mediaprobe-freebsd-x86_64.tar.gz -C /usr/local`).
 
 ### Windows Local Install + Context Menu (PowerShell)
 ```powershell

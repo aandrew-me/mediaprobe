@@ -15,7 +15,9 @@ on:
           - all
           - windows
           - macos
-          - linux
+          - linux-x86_64
+          - linux-arm64
+          - freebsd
       create_release:
         description: "Create a draft GitHub Release with built installers"
         type: boolean
@@ -98,9 +100,21 @@ jobs:
           path: dist/MediaProbe-macOS-Universal.dmg
 
   linux:
-    name: Linux (x86_64)
-    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'linux'
-    runs-on: ubuntu-22.04
+    name: Linux (${{ matrix.arch }})
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == matrix.input_name
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            deb_arch: amd64
+            runner: ubuntu-latest
+            input_name: linux-x86_64
+          - arch: arm64
+            deb_arch: arm64
+            runner: ubuntu-24.04-arm
+            input_name: linux-arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
 
@@ -134,7 +148,7 @@ jobs:
       - name: Package .deb and .tar.gz
         run: |
           VERSION=$(grep '^version' Cargo.toml | head -n1 | cut -d'"' -f2)
-          PKG_DIR="dist/mediaprobe_${VERSION}_amd64"
+          PKG_DIR="dist/mediaprobe_${VERSION}_${{ matrix.deb_arch }}"
           mkdir -p "$PKG_DIR/DEBIAN"
           mkdir -p "$PKG_DIR/usr/bin"
           mkdir -p "$PKG_DIR/usr/share/applications"
@@ -147,22 +161,58 @@ jobs:
           cp assets/icon.svg "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/mediaprobe.svg"
           cp assets/icon.png "$PKG_DIR/usr/share/icons/hicolor/256x256/apps/mediaprobe.png"
 
-          printf 'Package: mediaprobe\nVersion: %s\nSection: video\nPriority: optional\nArchitecture: amd64\nDepends: libc6, libfontconfig1, libgtk-3-0, libvulkan1\nMaintainer: MediaProbe\nDescription: Standalone desktop media inspector built with Rust and GPUI\n' "${VERSION}" > "$PKG_DIR/DEBIAN/control"
+          printf 'Package: mediaprobe\nVersion: %s\nSection: video\nPriority: optional\nArchitecture: %s\nDepends: libc6, libfontconfig1, libgtk-3-0, libvulkan1\nMaintainer: MediaProbe\nDescription: Standalone desktop media inspector built with Rust and GPUI\n' "${VERSION}" "${{ matrix.deb_arch }}" > "$PKG_DIR/DEBIAN/control"
 
           dpkg-deb --build "$PKG_DIR"
-          tar -czf "dist/mediaprobe-linux-x86_64.tar.gz" -C target/release mediaprobe
+          tar -czf "dist/mediaprobe-linux-${{ matrix.arch }}.tar.gz" -C target/release mediaprobe
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: mediaprobe-linux-x86_64
+          name: mediaprobe-linux-${{ matrix.arch }}
           path: |
             dist/*.deb
             dist/*.tar.gz
 
+  freebsd:
+    name: FreeBSD (x86_64)
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'freebsd'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build and test inside FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          sync: rsync
+          copyback: true
+          prepare: |
+            pkg install -y rust pkgconf libxcb libxkbcommon wayland vulkan-loader vulkan-headers fontconfig freetype2
+          run: |
+            rustc --version
+            cargo --version
+            cargo test --locked
+            rm -rf target/debug
+            cargo build --release --locked
+            mkdir -p dist/freebsd_pkg/bin dist/freebsd_pkg/share/applications dist/freebsd_pkg/share/icons/hicolor/scalable/apps dist/freebsd_pkg/share/icons/hicolor/256x256/apps
+            cp target/release/mediaprobe dist/freebsd_pkg/bin/mediaprobe
+            chmod 755 dist/freebsd_pkg/bin/mediaprobe
+            cp packaging/linux/mediaprobe.desktop dist/freebsd_pkg/share/applications/mediaprobe.desktop
+            cp assets/icon.svg dist/freebsd_pkg/share/icons/hicolor/scalable/apps/mediaprobe.svg
+            cp assets/icon.png dist/freebsd_pkg/share/icons/hicolor/256x256/apps/mediaprobe.png
+            tar -czf dist/mediaprobe-freebsd-x86_64.tar.gz -C dist/freebsd_pkg .
+            rm -rf target dist/freebsd_pkg
+
+      - name: Upload FreeBSD artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: mediaprobe-freebsd-x86_64
+          path: dist/mediaprobe-freebsd-x86_64.tar.gz
+
   release:
-    name: Create GitHub Release
-    needs: [windows, macos, linux]
+    name: Create Draft GitHub Release
+    needs: [windows, macos, linux, freebsd]
     if: always() && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release)) && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     permissions:
