@@ -1,0 +1,221 @@
+name: Build Desktop Installers
+
+on:
+  push:
+    branches: [release]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Platform to build"
+        type: choice
+        default: "all"
+        options:
+          - all
+          - windows
+          - macos
+          - linux-x86_64
+          - linux-arm64
+          - freebsd
+      create_release:
+        description: "Create a draft GitHub Release with built installers"
+        type: boolean
+        default: false
+      release_tag:
+        description: "Release tag name (e.g. v0.1.0, optional)"
+        type: string
+        default: ""
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows (x86_64)
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'windows'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Build Windows Installer (Inno Setup)
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\mediaprobe.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item target\release\mediaprobe.exe dist\mediaprobe-windows-x86_64.exe
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: mediaprobe-windows-x86_64
+          path: |
+            dist/MediaProbe-Setup-x86_64.exe
+            dist/mediaprobe-windows-x86_64.exe
+
+  macos:
+    name: macOS (Universal)
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'macos'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Build Universal macOS binary
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          mkdir -p dist/dmg_root/MediaProbe.app/Contents/MacOS
+          mkdir -p dist/dmg_root/MediaProbe.app/Contents/Resources
+          lipo -create \
+            target/aarch64-apple-darwin/release/mediaprobe \
+            target/x86_64-apple-darwin/release/mediaprobe \
+            -output dist/dmg_root/MediaProbe.app/Contents/MacOS/mediaprobe
+          cp packaging/macos/Info.plist dist/dmg_root/MediaProbe.app/Contents/Info.plist
+          cp assets/icon.icns dist/dmg_root/MediaProbe.app/Contents/Resources/AppIcon.icns
+          ln -s /Applications dist/dmg_root/Applications
+          hdiutil create -volname "MediaProbe" -srcfolder dist/dmg_root -ov -format UDZO dist/MediaProbe-macOS-Universal.dmg
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: mediaprobe-macos-universal
+          path: dist/MediaProbe-macOS-Universal.dmg
+
+  linux:
+    name: Linux (${{ matrix.arch }})
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || startsWith(inputs.target, 'linux-')
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson((github.event_name != 'workflow_dispatch' || inputs.target == 'all') && '[{"arch":"x86_64","deb_arch":"amd64","runner":"ubuntu-latest"},{"arch":"arm64","deb_arch":"arm64","runner":"ubuntu-24.04-arm"}]' || (inputs.target == 'linux-x86_64' && '[{"arch":"x86_64","deb_arch":"amd64","runner":"ubuntu-latest"}]' || '[{"arch":"arm64","deb_arch":"arm64","runner":"ubuntu-24.04-arm"}]')) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install system dependencies for GPUI & rfd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libwayland-dev \
+            libvulkan-dev \
+            libfontconfig1-dev \
+            libgtk-3-dev \
+            libasound2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package .deb and .tar.gz
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -n1 | cut -d'"' -f2)
+          PKG_DIR="dist/mediaprobe_${VERSION}_${{ matrix.deb_arch }}"
+          mkdir -p "$PKG_DIR/DEBIAN"
+          mkdir -p "$PKG_DIR/usr/bin"
+          mkdir -p "$PKG_DIR/usr/share/applications"
+          mkdir -p "$PKG_DIR/usr/share/icons/hicolor/scalable/apps"
+          mkdir -p "$PKG_DIR/usr/share/icons/hicolor/256x256/apps"
+
+          cp target/release/mediaprobe "$PKG_DIR/usr/bin/mediaprobe"
+          chmod 755 "$PKG_DIR/usr/bin/mediaprobe"
+          cp packaging/linux/mediaprobe.desktop "$PKG_DIR/usr/share/applications/mediaprobe.desktop"
+          cp assets/icon.svg "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/mediaprobe.svg"
+          cp assets/icon.png "$PKG_DIR/usr/share/icons/hicolor/256x256/apps/mediaprobe.png"
+
+          printf 'Package: mediaprobe\nVersion: %s\nSection: video\nPriority: optional\nArchitecture: %s\nDepends: libc6, libfontconfig1, libgtk-3-0, libvulkan1\nMaintainer: MediaProbe\nDescription: Standalone desktop media inspector built with Rust and GPUI\n' "${VERSION}" "${{ matrix.deb_arch }}" > "$PKG_DIR/DEBIAN/control"
+
+          dpkg-deb --build "$PKG_DIR"
+          tar -czf "dist/mediaprobe-linux-${{ matrix.arch }}.tar.gz" -C target/release mediaprobe
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: mediaprobe-linux-${{ matrix.arch }}
+          path: |
+            dist/*.deb
+            dist/*.tar.gz
+
+  freebsd:
+    name: FreeBSD (x86_64)
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'freebsd'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build and test inside FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          sync: rsync
+          copyback: true
+          prepare: |
+            pkg install -y rust pkgconf libxcb libxkbcommon wayland vulkan-loader vulkan-headers fontconfig freetype2
+          run: |
+            rustc --version
+            cargo --version
+            cargo test --locked
+            rm -rf target/debug
+            cargo build --release --locked
+            mkdir -p dist/freebsd_pkg/bin dist/freebsd_pkg/share/applications dist/freebsd_pkg/share/icons/hicolor/scalable/apps dist/freebsd_pkg/share/icons/hicolor/256x256/apps
+            cp target/release/mediaprobe dist/freebsd_pkg/bin/mediaprobe
+            chmod 755 dist/freebsd_pkg/bin/mediaprobe
+            cp packaging/linux/mediaprobe.desktop dist/freebsd_pkg/share/applications/mediaprobe.desktop
+            cp assets/icon.svg dist/freebsd_pkg/share/icons/hicolor/scalable/apps/mediaprobe.svg
+            cp assets/icon.png dist/freebsd_pkg/share/icons/hicolor/256x256/apps/mediaprobe.png
+            tar -czf dist/mediaprobe-freebsd-x86_64.tar.gz -C dist/freebsd_pkg .
+            rm -rf target dist/freebsd_pkg
+
+      - name: Upload FreeBSD artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: mediaprobe-freebsd-x86_64
+          path: dist/mediaprobe-freebsd-x86_64.tar.gz
+
+  release:
+    name: Create Draft GitHub Release
+    needs: [windows, macos, linux, freebsd]
+    if: always() && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release)) && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.release_tag != '' && inputs.release_tag || format('v0.1.0-build.{0}', github.run_number)) }}
+          draft: true
+          files: artifacts/**/*
